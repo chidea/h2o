@@ -28,6 +28,68 @@ sym_validate_len(mrb_state *mrb, size_t len)
   }
 }
 
+#ifndef MRB_ENABLE_ALL_SYMBOLS
+static const char pack_table[] = "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+static mrb_sym
+sym_inline_pack(const char *name, uint16_t len)
+{
+  const int lower_length_max = (MRB_SYMBOL_BITSIZE - 2) / 5;
+  const int mix_length_max   = (MRB_SYMBOL_BITSIZE - 2) / 6;
+
+  char c;
+  const char *p;
+  int i;
+  mrb_sym sym = 0;
+  int lower = 1;
+
+  if (len > lower_length_max) return 0; /* too long */
+  for (i=0; i<len; i++) {
+    uint32_t bits;
+
+    c = name[i];
+    if (c == 0) return 0;       /* NUL in name */
+    p = strchr(pack_table, (int)c);
+    if (p == 0) return 0;       /* non alnum char */
+    bits = (uint32_t)(p - pack_table)+1;
+    if (bits > 27) lower = 0;
+    sym |= bits<<(i*6+2);
+  }
+  if (lower) {
+    sym = 0;
+    for (i=0; i<len; i++) {
+      uint32_t bits;
+
+      c = name[i];
+      p = strchr(pack_table, (int)c);
+      bits = (uint32_t)(p - pack_table)+1;
+      sym |= bits<<(i*5+2);
+    }
+    return sym | 3;
+  }
+  if (len > mix_length_max) return 0;
+  return sym | 1;
+}
+
+static const char*
+sym_inline_unpack(mrb_sym sym, char *buf, mrb_int *lenp)
+{
+  int bit_per_char = sym&2 ? 5 : 6;  /* all lower case if `sym&2` is true */
+  int i;
+
+  mrb_assert(sym&1);
+
+  for (i=0; i<30/bit_per_char; i++) {
+    uint32_t bits = sym>>(i*bit_per_char+2) & ((1<<bit_per_char)-1);
+    if (bits == 0) break;
+    buf[i] = pack_table[bits-1];;
+  }
+  buf[i] = '\0';
+  if (lenp) *lenp = i;
+  return buf;
+}
+#endif
+
 uint8_t
 symhash(const char *key, size_t len)
 {
@@ -50,19 +112,25 @@ find_symbol(mrb_state *mrb, const char *name, uint16_t len, uint8_t hash)
   mrb_sym i;
   symbol_name *sname;
 
+#ifndef MRB_ENABLE_ALL_SYMBOLS
+  /* inline symbol */
+  i = sym_inline_pack(name, len);
+  if (i > 0) return i;
+#endif
+
   i = mrb->symhash[hash];
   if (i == 0) return 0;
   do {
     sname = &mrb->symtbl[i];
     if (sname->len == len && memcmp(sname->name, name, len) == 0) {
-      return i;
+      return i<<1;
     }
     if (sname->prev == 0xff) {
       i -= 0xff;
       sname = &mrb->symtbl[i];
       while (mrb->symtbl < sname) {
         if (sname->len == len && memcmp(sname->name, name, len) == 0) {
-          return (mrb_sym)(sname - mrb->symtbl);
+          return (mrb_sym)(sname - mrb->symtbl)<<1;
         }
         sname--;
       }
@@ -117,7 +185,7 @@ sym_intern(mrb_state *mrb, const char *name, size_t len, mrb_bool lit)
   }
   mrb->symhash[hash] = sym;
 
-  return sym;
+  return sym<<1;
 }
 
 MRB_API mrb_sym
@@ -170,6 +238,13 @@ mrb_check_intern_str(mrb_state *mrb, mrb_value str)
 MRB_API const char*
 mrb_sym2name_len(mrb_state *mrb, mrb_sym sym, mrb_int *lenp)
 {
+#ifndef MRB_ENABLE_ALL_SYMBOLS
+  if (sym & 1) {                /* inline packed symbol */
+    return sym_inline_unpack(sym, mrb->symbuf, lenp);
+  }
+#endif
+
+  sym >>= 1;
   if (sym == 0 || mrb->symidx < sym) {
     if (lenp) *lenp = 0;
     return NULL;
@@ -446,6 +521,9 @@ mrb_sym2str(mrb_state *mrb, mrb_sym sym)
   const char *name = mrb_sym2name_len(mrb, sym, &len);
 
   if (!name) return mrb_undef_value(); /* can't happen */
+  if (sym&1) {                         /* inline symbol */
+    return mrb_str_new(mrb, name, len);
+  }
   return mrb_str_new_static(mrb, name, len);
 }
 

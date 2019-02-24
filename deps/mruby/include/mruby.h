@@ -242,6 +242,9 @@ typedef struct mrb_state {
   struct symbol_name *symtbl;   /* symbol table */
   mrb_sym symhash[256];
   size_t symcapa;
+#ifndef MRB_ENABLE_SYMBOLL_ALL
+  char symbuf[8];               /* buffer for small symbol names */
+#endif
 
 #ifdef MRB_ENABLE_DEBUG_HOOK
   void (*code_fetch_hook)(struct mrb_state* mrb, struct mrb_irep *irep, mrb_code *pc, mrb_value *regs);
@@ -486,7 +489,7 @@ MRB_API void mrb_define_const(mrb_state*, struct RClass*, const char *name, mrb_
  *     }
  * @param [mrb_state*] mrb_state* The mruby state reference.
  * @param [struct RClass*] RClass* A class the method will be undefined from.
- * @param [const char] const char* The name of the method to be undefined.
+ * @param [const char*] const char* The name of the method to be undefined.
  */
 MRB_API void mrb_undef_method(mrb_state*, struct RClass*, const char*);
 MRB_API void mrb_undef_method_id(mrb_state*, struct RClass*, mrb_sym);
@@ -526,7 +529,7 @@ MRB_API void mrb_undef_method_id(mrb_state*, struct RClass*, mrb_sym);
  *      }
  * @param [mrb_state*] mrb_state* The mruby state reference.
  * @param [RClass*] RClass* A class the class method will be undefined from.
- * @param [constchar*] constchar* The name of the class method to be undefined.
+ * @param [const char*] const char* The name of the class method to be undefined.
  */
 MRB_API void mrb_undef_class_method(mrb_state*, struct RClass*, const char*);
 
